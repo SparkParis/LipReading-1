@@ -9,38 +9,45 @@ import dlib # run "pip install dlib"
 from imutils import face_utils
 #This program extracts face data from the images and saves it in images size of 224,224,3
 #this size was chosen as the VGG model needs 224 x 224 x 3 images to process 
-RECTANGLE_LENGTH = 90
+RECTANGLE_LENGTH = 48
 
 def get_faces( filename, face_cascade, mouth_cascade,detector,predictor):
-	image = cv2.imread(filename)
-	#image = imutils.resize(image, width=500)
-	gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-	face_images = []
-	# detect faces in the grayscale image
-	rects = detector(gray, 1)
-	if len(rects) > 1:
-		print( "ERROR: more than one face detected")
-		return
-	if len(rects) < 1:
-		print( "ERROR: no faces detected")
-		return 
+    image = cv2.imread(filename)
+    #image = imutils.resize(image, width=500)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    face_images = []
+    # detect faces in the grayscale image
+    rects = detector(gray, 1)
+    if len(rects) > 1:
+        print( "ERROR: more than one face detected")
+        return
+    if len(rects) < 1:
+        print( "ERROR: no faces detected")
+        return 
 
-	rect = rects[0]
-	shape = predictor(gray, rect)
-	shape = face_utils.shape_to_np(shape)
-	(x, y, w, h) = face_utils.rect_to_bb(rect)
-	w = RECTANGLE_LENGTH
-	h = RECTANGLE_LENGTH
-	cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    rect = rects[0]
+    shape = predictor(gray, rect)
+    shape = face_utils.shape_to_np(shape)
+    (x, y, w, h) = face_utils.rect_to_bb(rect)
+    if w > h:
+        rec_len = w +10
+    else:
+        rec_len = h +10
 
-	(x_r, y_r, w_r, h_r) = (x, y, w, h)
- 
-	cv2.putText(image, "Face #{}".format(0 + 1), (x - 10, y - 10),
-		cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
- 
-	crop_img = image[y_r:y_r + h_r, x_r:x_r + w_r]
-	face_images.append(crop_img)
-	return face_images
+    w = rec_len
+    h = rec_len
+    x= x-5
+    y= y-5
+    #cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    (x_r, y_r, w_r, h_r) = (x, y, w, h)
+
+    #cv2.putText(image, "Face #{}".format(0 + 1), (x - 10, y - 10),
+    #	cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    crop_img = image[y_r:y_r + h_r, x_r:x_r + w_r]
+    face_images.append(crop_img)
+    return face_images
 
 # Walk into directories in filesystem
 # Ripped from os module and slightly modified
@@ -93,12 +100,12 @@ def scan_images(root_dir):
             print("Current directory" + current_dir)
             dir_check = current_dir
             dir_check[-6:]
-            if dir_check is "output":
+            if dir_check is "t4848_" or dir_check is "ut4848" or dir_check is "ut3030" or dir_check is "output":
                 print("This is already an output directory" % current_dir)
                 break
             dir_created = 0
             file_num = 0
-            output_dir =  current_dir + "/output"
+            output_dir =  current_dir + "/output4848_"
             
             file_list = [f for f in listdir(current_dir) if isfile(join(current_dir, f))]
             for filename in file_list:
@@ -123,7 +130,7 @@ def scan_images(root_dir):
                             for face in faces:
                                 face_filename = os.path.join(output_dir, "face_{:03d}.png".format(file_num))
                                 print(face.shape)
-                                face = cv2.resize(face, (90, 90))
+                                face = cv2.resize(face, (RECTANGLE_LENGTH, RECTANGLE_LENGTH))
                                 print(face.shape)
                                 cv2.imwrite(face_filename, face)
                                 print("\tWrote {} extracted from {}".format(face_filename, filename))
@@ -138,11 +145,11 @@ def scan_images(root_dir):
     print("Total number of faces: {}".format(num_faces))          
 
 
-#scan_images("F01")
-#scan_images("F02")
-#scan_images("F04")
-#scan_images("F05")
-#scan_images("F06")
+scan_images("F01")
+scan_images("F02")
+scan_images("F04")
+scan_images("F05")
+scan_images("F06")
 scan_images("F07")
 scan_images("F08")
 scan_images("F09")
