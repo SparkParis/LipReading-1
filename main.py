@@ -30,6 +30,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.multiclass import unique_labels
 from keras.callbacks import CSVLogger
+from keras.layers import BatchNormalization
 #from model import MobileNetv2
 #from mobilenet_v2 import MobileNetv2
 
@@ -59,6 +60,7 @@ class Config(object):
 		self.MAX_WIDTH = 48
 		self.MAX_HEIGHT = 48
 		self.class_names = ["begin","choose","connection","navigation","next","previous","start","stop","hello","web"]
+		#self.class_names = ["stop navigation","excuse me","I am sorry","thank you","good bye","I love this game","nice to meet you","you are welcome","how are you","have a good time"]
 		self.seen_validation = sv
 		
 	
@@ -91,19 +93,23 @@ class LipReader(object):
 			bottleneck_train_path = 'bottleneck_features_train_seen.npy'
 			bottleneck_val_path = 'bottleneck_features_val_seen.npy'
 			bottleneck_test_path = 'bottleneck_features_test_seen.npy'
+			bottleneck_train_labels_path = 'bottleneck_features_train_labels_seen.npy'
 		else:
 			bottleneck_train_path = 'bottleneck_features_train_unseen.npy'
 			bottleneck_val_path = 'bottleneck_features_val_unseen.npy'
 			bottleneck_test_path = 'bottleneck_features_test_unseen.npy'
+			bottleneck_train_labels_path = 'bottleneck_features_train_labels_unseen.npy'
 	
 		if not os.path.exists(bottleneck_train_path):
+			#self.DataAugmentation()
 			input_layer = keras.layers.Input(shape=(self.config.max_seq_len, self.config.MAX_WIDTH, self.config.MAX_HEIGHT, 3))
 			# build the VGG16 network
-			vgg_base = VGGFace(weights='vggface', include_top=False, input_shape=(self.config.MAX_WIDTH, self.config.MAX_HEIGHT, 3))
+			#vgg_base = VGGFace(weights='vggface', include_top=False, input_shape=(self.config.MAX_WIDTH, self.config.MAX_HEIGHT, 3))
+			vgg_base = VGG16(weights='imagenet', include_top=False, input_shape=(self.config.MAX_WIDTH, self.config.MAX_HEIGHT, 3))
 			vgg = Model(inputs=vgg_base.input, outputs=vgg_base.output)
-			vgg.trainable = False
-			#for layer in vgg.layers[:15]:
-			#	layer.trainable = False
+			#vgg.trainable = False
+			for layer in vgg.layers[:15]:
+				layer.trainable = False
 			x = TimeDistributed(vgg)(input_layer)
 			bottleneck_model = Model(inputs=input_layer, outputs=x)
 			if not os.path.exists(bottleneck_train_path):
@@ -116,6 +122,11 @@ class LipReader(object):
 			if not os.path.exists(bottleneck_test_path):
 				bottleneck_features_test = bottleneck_model.predict(self.X_test)
 				np.save(bottleneck_test_path, bottleneck_features_test)
+			if not os.path.exists(bottleneck_train_labels_path):
+				np.save(bottleneck_train_labels_path, self.y_train)
+
+		bottleneck_model.summary()
+		plot_model(bottleneck_model, to_file='bottleneck_model_plot.png', show_shapes=True, show_layer_names=True)
 
 	def create_model(self, seen_validation):
 		np.random.seed(0)
@@ -123,9 +134,9 @@ class LipReader(object):
 		model.add(TimeDistributed(keras.layers.core.Flatten(),input_shape=self.train_data.shape[1:]))
 		lstm = keras.layers.recurrent.LSTM(256)
 		model.add(keras.layers.wrappers.Bidirectional(lstm, merge_mode='concat', weights=None))
+		#model.add(BatchNormalization())
+		#model.add(BatchNormalization(momentum=0.99, epsilon=0.001))
 
-		#model.add(keras.layers.normalization.BatchNormalization(axis=3, momentum=0.99, epsilon=0.001))
-		#model.add(keras.layers.core.Activation('relu'))
 		model.add(keras.layers.core.Dropout(rate=self.config.dropout))
 		model.add(keras.layers.core.Dense(10))
 		model.add(keras.layers.core.Activation('softmax'))
@@ -133,7 +144,7 @@ class LipReader(object):
 		model.compile(optimizer=adam, loss='categorical_crossentropy', metrics=['accuracy'])
 		one_hot_labels_val = keras.utils.to_categorical(self.y_val, num_classes=self.config.num_classes)
 		one_hot_labels_test = keras.utils.to_categorical(self.y_test, num_classes=self.config.num_classes)
-		one_hot_labels_train = keras.utils.to_categorical(self.y_train, num_classes=self.config.num_classes)
+		one_hot_labels_train = keras.utils.to_categorical(self.train_data_label, num_classes=self.config.num_classes)
 		print('Fitting the model...')
 		self.config.class_names = np.array(self.config.class_names)
 		self.iteration += 1
@@ -144,9 +155,105 @@ class LipReader(object):
 
 		csv_logger = keras.callbacks.CSVLogger(fileName, separator=',', append=True)
         #self.plot_confusion_matrix(self.y_test, y_pred,  title='Confusion matrix, without normalization')
+		model.summary()
+		plot_model(model, to_file='model_plot.png', show_shapes=True, show_layer_names=True)
 		history = model.fit(self.train_data, one_hot_labels_train, epochs=self.config.num_epochs, batch_size=self.config.batch_size,validation_data=(self.val_data, one_hot_labels_val),callbacks=[csv_logger])
 		self.create_save_plots(history,model)
 		self.evaluate_model(model,one_hot_labels_test,one_hot_labels_val)
+
+	def DataAugmentation(self):
+		#Generates 2 sets of augmented image from the given image and adds it to the training array
+		if self.config.seen_validation is True:
+			trainingDataSize = 1200
+			testDataSize = 150
+		else:
+			trainingDataSize = 1300
+			testDataSize = 100
+		datagen = ImageDataGenerator(
+			featurewise_center=False,  # set input mean to 0 over the dataset
+			samplewise_center=False,  # set each sample mean to 0
+			featurewise_std_normalization=False,  # divide inputs by std of the dataset
+			samplewise_std_normalization=False,  # divide each input by its std
+			zca_whitening=False,  # apply ZCA whitening
+			rotation_range=1,  # randomly rotate images in the range (degrees, 0 to 180)
+			width_shift_range=0.1,  # randomly shift images horizontally (fraction of total width)
+			height_shift_range=0.1,  # randomly shift images vertically (fraction of total height)
+			horizontal_flip=True,  # randomly flip images
+			vertical_flip=False)  # randomly flip images
+		# compute quantities required for featurewise normalization
+		# (std, mean, and principal components if ZCA whitening is applied)
+		print(np.shape(self.X_train)[0])
+		#x = np.reshape(self.X_train,(22, 30, 30, 3))
+		
+		x_sequence_1 = []
+		y_sequence_1 = []
+		x_sequence_2 = []
+		y_sequence_2 = []
+		x_new_1 = []
+		x_new_2 = []
+		y_new_1 = []
+		y_new_2 = []
+
+		for i in range(trainingDataSize):
+
+			x = self.X_train[i : (i + 1)]
+			y = self.y_train[i : (i + 1)]
+			x = np.reshape(x,(self.config.max_seq_len ,self.config.MAX_WIDTH  , self.config.MAX_HEIGHT , 3))
+			#print ("x_train data")
+			#print(self.X_train)
+			one_hot_labels_train_ = keras.utils.to_categorical(y, num_classes=self.config.num_classes)
+			y = np.array([y[0]] * self.config.max_seq_len )
+			#y= y * 22
+			one_hot_labels_train = keras.utils.to_categorical(y, num_classes=self.config.num_classes)
+
+			x = np.reshape(x,(self.config.max_seq_len ,self.config.MAX_WIDTH  , self.config.MAX_HEIGHT , 3))
+			y_sequence_1.append(y)
+			y_sequence_2.append(y)
+			for k in range(self.config.max_seq_len ):
+
+
+				x_test = x[k : (k + 1)]
+				y_test = y[k : (k + 1)]
+				#x_show = np.reshape(x_test,(self.config.MAX_WIDTH  , self.config.MAX_HEIGHT , 3))
+				#x_show = x_show.astype(np.uint8)
+				#print ("x_test data")
+				#print(x_test)
+				#cv2.imshow('image',x_show)
+				#cv2.waitKey(0)
+
+				j = 0
+				maxval = int(np.amax(x_test))
+				if maxval is 0: 
+					x_sequence_1.append(x_test)
+					x_sequence_2.append(x_test)
+
+				else:
+					for x_temp, y_temp in datagen.flow(x_test, one_hot_labels_train_,batch_size=2, save_to_dir='images', save_prefix='aug', save_format='png'):
+					#for x_temp, y_temp in datagen.flow(x_test, one_hot_labels_train_):
+						#x_temp = np.reshape(x_temp, (1,self.config.max_seq_len , self.config.MAX_WIDTH ,self.config.MAX_HEIGHT , 3))
+						if j is 0:
+							x_sequence_1.append(x_temp)
+							#y_sequence_1.append(y_test)
+						if j is 1 :
+							x_sequence_2.append(x_temp)
+							#y_sequence_2.append(y_test)
+						j += 1
+						if j is 2 :
+							break
+			print(i)
+			if i >= trainingDataSize:
+				break
+		x_sequence_1 = np.reshape(x_sequence_1,(trainingDataSize,self.config.max_seq_len ,self.config.MAX_WIDTH,self.config.MAX_WIDTH,3))
+		x_sequence_2 = np.reshape(x_sequence_2,(trainingDataSize,self.config.max_seq_len ,self.config.MAX_WIDTH,self.config.MAX_WIDTH,3))
+		#y_sequence_1 = np.reshape(y_sequence_1, (1200,))
+		#y_sequence_2 = np.reshape(y_sequence_2, (1200,))
+		x_new_1= np.append(self.X_train,x_sequence_1)
+		x_new_2= np.append(x_new_1, x_sequence_2)
+		x_new_2 = np.reshape(x_new_2, (trainingDataSize * 3,self.config.max_seq_len ,self.config.MAX_WIDTH,self.config.MAX_WIDTH,3))
+		y_new_1 = np.append(self.y_train,self.y_train)
+		y_new_2 = np.append(y_new_1,self.y_train)
+		self.X_train = x_new_2
+		self.y_train = y_new_2
 
 	def evaluate_model(self,model,one_hot_labels_test,one_hot_labels_val):
 		print('Evaluating the model...')
@@ -274,27 +381,25 @@ class LipReader(object):
 			bottleneck_train_path = 'bottleneck_features_train_seen.npy'
 			bottleneck_val_path = 'bottleneck_features_val_seen.npy'
 			bottleneck_test_path = 'bottleneck_features_test_seen.npy'
+			bottleneck_train_labels_path = 'bottleneck_features_train_labels_seen.npy'
 		else:
 			bottleneck_train_path = 'bottleneck_features_train_unseen.npy'
 			bottleneck_val_path = 'bottleneck_features_val_unseen.npy'
 			bottleneck_test_path = 'bottleneck_features_test_unseen.npy'
+			bottleneck_train_labels_path = 'bottleneck_features_train_labels_unseen.npy'
 
 		self.train_data = np.load(bottleneck_train_path)
 		self.val_data = np.load(bottleneck_val_path)	
 		self.test_data = np.load(bottleneck_test_path)
+		self.train_data_label= np.load(bottleneck_train_labels_path)
 
 	def load_bottleneck_data(self, seen_validation):
 
 		self.limited_set = False
-		if self.limited_set:
-			data_dir = 'data_limited'
-		else:
-			data_dir = 'data'
+
+		data_dir = 'data'
 		if seen_validation:
-			if self.limited_set:
-				data_dir = 'data_seen_limited'
-			else:
-				data_dir = 'data_seen'
+			data_dir = 'data_seen'
 
 		print(data_dir)
 		if os.path.exists('../' + data_dir):
@@ -414,24 +519,31 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Lip reading model')
 	parser.add_argument('--seen_validation', dest='seen_validation', action='store_true')
 	#parser.add_argument('--unseen_validation', dest='seen_validation', action='store_false')
-	parser.set_defaults(seen_validation=True)
-	ARGS = parser.parse_args()
-	print("Seen validation: %r" % (ARGS.seen_validation))
-	config = Config(10, 0, 22, 0, 0, 0, ARGS.seen_validation)
-	lipReader = LipReader(config)
-	lipReader.load_bottleneck_data(ARGS.seen_validation)
-	lipReader.create_bottleneck_model(ARGS.seen_validation)
-	lipReader.load_data(ARGS.seen_validation)
 	
-	num_epochs = [35]#10
-	learning_rates = [0.0001, 0.0005]
-	batch_size = [64]
-	dropout_ = [0.1, 0.2, 0.3, 0.5 ]
-	for ne in num_epochs:
-		for bs in batch_size: 
-			for lr in learning_rates:
-				for dp in dropout_:
-					print("Epochs: {0}    Batch Size:{1}  Learning Rate: {2} Dropout {3}".format(ne, bs, lr, dp))
-					config = Config(10, ne, 22, bs, lr, dp,ARGS.seen_validation)
-					lipReader.update_config(config)
-					lipReader.create_model(ARGS.seen_validation)
+	for i in range(2):
+		if i is 0:
+			parser.set_defaults(seen_validation=True)
+		else:
+			parser.set_defaults(seen_validation=False)
+		ARGS = parser.parse_args()
+		print("Seen validation: %r" % (ARGS.seen_validation))
+		config = Config(10, 0, 22, 0, 0, 0, ARGS.seen_validation)
+		lipReader = LipReader(config)
+		lipReader.load_bottleneck_data(ARGS.seen_validation)
+		lipReader.create_bottleneck_model(ARGS.seen_validation)
+		lipReader.load_data(ARGS.seen_validation)
+		
+		num_epochs = [35]#10
+		learning_rates = [0.0001, 0.0002, 0.0005]
+		#learning_rates = [0.0005]
+		batch_size = [64]
+		dropout_ = [ 0.1, 0.3,0.5]
+		#dropout_ = [ 0.4]
+		for ne in num_epochs:
+			for bs in batch_size: 
+				for lr in learning_rates:
+					for dp in dropout_:
+						print("Epochs: {0}    Batch Size:{1}  Learning Rate: {2} Dropout {3}".format(ne, bs, lr, dp))
+						config = Config(10, ne, 22, bs, lr, dp,ARGS.seen_validation)
+						lipReader.update_config(config)
+						lipReader.create_model(ARGS.seen_validation)
